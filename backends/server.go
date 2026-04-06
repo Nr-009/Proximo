@@ -16,6 +16,7 @@ type Server struct {
 	BaseLatency time.Duration
 	Capacity    int
 	ErrorRate   int
+	Weight      int
 	Active      bool
 	activeConns int64
 	httpServer  *http.Server
@@ -64,8 +65,8 @@ func Start(s *Server) {
 		Handler: s,
 	}
 
-	log.Printf("[backend] server starting on port %d | latency %dms | capacity %d | error rate %d%%",
-		s.Port, s.BaseLatency.Milliseconds(), s.Capacity, s.ErrorRate)
+	log.Printf("[backend] server starting on port %d | latency %dms | capacity %d | weight %d | error rate %d%%",
+		s.Port, s.BaseLatency.Milliseconds(), s.Capacity, s.Weight, s.ErrorRate)
 
 	if err := s.httpServer.ListenAndServe(); err != nil {
 		if err == http.ErrServerClosed {

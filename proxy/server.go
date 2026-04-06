@@ -36,6 +36,7 @@ func (p *Proxy) AddServers(configs []config.ServerConfig) {
 			BaseLatency: time.Duration(c.LatencyMS) * time.Millisecond,
 			Capacity:    c.Capacity,
 			ErrorRate:   c.ErrorRate,
+			Weight:      c.Weight,
 		}
 		p.backends = append(p.backends, s)
 		go backends.Start(s)
