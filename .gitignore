@@ -1,0 +1,11 @@
+# Binaries
+proximo
+backends/server
+
+# Go
+*.exe
+*.out
+
+# OS
+.DS_Store
+EOF
