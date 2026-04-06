@@ -1,8 +1,6 @@
 package main
 
-import (
-	"github.com/Nr-009/Proximo/proxy"
-)
+import "github.com/Nr-009/Proximo/proxy"
 
 func main() {
 	p := proxy.New()

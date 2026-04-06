@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sync/atomic"
 )
 
 func (p *Proxy) forward(w http.ResponseWriter, r *http.Request) {
@@ -23,6 +24,8 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "service unavailable", http.StatusServiceUnavailable)
 		return
 	}
+
+	defer atomic.AddInt64(&backend.Connections, -1)
 
 	url := fmt.Sprintf("http://localhost:%d%s", backend.Port, r.URL.Path)
 	if r.URL.RawQuery != "" {

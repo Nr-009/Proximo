@@ -9,67 +9,60 @@ import (
 )
 
 type Weighted struct {
-	servers       []*backends.Server
-	currentWeight []int
-	mu            sync.Mutex
+    servers       *[]*backends.Server
+    currentWeight map[int]int
+    mu            sync.Mutex
 }
 
-func NewWeighted(servers []*backends.Server) *Weighted {
-	return &Weighted{
-		servers:       servers,
-		currentWeight: make([]int, len(servers)),
-	}
+func NewWeighted(servers *[]*backends.Server) *Weighted {
+    cw := make(map[int]int)
+    for _, s := range *servers {
+        cw[s.Port] = 0
+    }
+    return &Weighted{
+        servers:       servers,
+        currentWeight: cw,
+    }
 }
 
 func (w *Weighted) NextServer() (*backends.Server, error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
+    w.mu.Lock()
+    defer w.mu.Unlock()
 
-	total := 0
-	best := -1
+    total := 0
+    var best *backends.Server
 
-	for i, s := range w.servers {
-		if !s.Active {
-			continue
-		}
+    for _, s := range *w.servers {
+        if !s.Active {
+            continue
+        }
 
-		// step 1 — add weight to current
-		w.currentWeight[i] += s.Weight
-		total += s.Weight
+        w.currentWeight[s.Port] += s.Weight
+        total += s.Weight
 
-		// step 2 — pick highest current weight
-		if best == -1 || w.currentWeight[i] > w.currentWeight[best] {
-			best = i
-		}
-	}
+        if best == nil || w.currentWeight[s.Port] > w.currentWeight[best.Port] {
+            best = s
+        }
+    }
 
-	if best == -1 {
-		return nil, errors.New("all servers are inactive")
-	}
+    if best == nil {
+        return nil, errors.New("all servers are inactive")
+    }
 
-	// step 3 — penalize winner by subtracting total
-	w.currentWeight[best] -= total
-
-	return w.servers[best], nil
+    w.currentWeight[best.Port] -= total
+    return best, nil
 }
 
-func (w *Weighted) AddServer(s *backends.Server) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.servers = append(w.servers, s)
-	w.currentWeight = append(w.currentWeight, 0)
-	log.Printf("[weighted] server added on port %d", s.Port)
+func (w *Weighted) OnAddServer(s *backends.Server) {
+    w.mu.Lock()
+    defer w.mu.Unlock()
+    w.currentWeight[s.Port] = 0
+    log.Printf("[weighted] internal state updated for new server on port %d", s.Port)
 }
 
-func (w *Weighted) RemoveServer(s *backends.Server) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	for i, srv := range w.servers {
-		if srv.Port == s.Port {
-			w.servers = append(w.servers[:i], w.servers[i+1:]...)
-			w.currentWeight = append(w.currentWeight[:i], w.currentWeight[i+1:]...)
-			log.Printf("[weighted] server removed on port %d", s.Port)
-			return
-		}
-	}
+func (w *Weighted) OnRemoveServer(s *backends.Server) {
+    w.mu.Lock()
+    defer w.mu.Unlock()
+    delete(w.currentWeight, s.Port)
+    log.Printf("[weighted] internal state cleaned up for server on port %d", s.Port)
 }

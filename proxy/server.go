@@ -37,19 +37,25 @@ func (p *Proxy) AddServers(configs []config.ServerConfig) {
 			Capacity:    c.Capacity,
 			ErrorRate:   c.ErrorRate,
 			Weight:      c.Weight,
+			Active:      true,
 		}
 		p.backends = append(p.backends, s)
 		go backends.Start(s)
+
+		// notify balancer to update internal state for new server
+		if p.balancer != nil {
+			p.balancer.OnAddServer(s)
+		}
+
 		log.Printf("[proxy] added backend on port %d", c.Port)
 	}
 }
-
 
 func (p *Proxy) SetStrategy(strategy string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	b, err := balancer.New(strategy, p.backends)
+	b, err := balancer.New(strategy, &p.backends)
 	if err != nil {
 		return err
 	}
@@ -59,12 +65,9 @@ func (p *Proxy) SetStrategy(strategy string) error {
 	return nil
 }
 
-
 func (p *Proxy) Start(trafficPort, adminPort int) {
 	go p.startAdmin(adminPort)
-
 	time.Sleep(100 * time.Millisecond)
-
 	p.startTraffic(trafficPort)
 }
 

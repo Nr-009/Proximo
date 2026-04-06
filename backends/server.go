@@ -18,6 +18,7 @@ type Server struct {
 	ErrorRate   int
 	Weight      int
 	Active      bool
+	Connections int64
 	activeConns int64
 	httpServer  *http.Server
 }
@@ -47,18 +48,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"server":       s.Port,
-		"latency_ms":   latency.Milliseconds(),
-		"active_conns": conns,
+		"server":     s.Port,
+		"latency_ms": latency.Milliseconds(),
 	})
 }
 
-func (s *Server) ActiveConns() int64 {
-	return atomic.LoadInt64(&s.activeConns)
-}
-
 func Start(s *Server) {
-	s.Active = true
 	addr := fmt.Sprintf(":%d", s.Port)
 	s.httpServer = &http.Server{
 		Addr:    addr,
