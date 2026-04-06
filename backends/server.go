@@ -16,6 +16,7 @@ type Server struct {
 	BaseLatency time.Duration
 	Capacity    int
 	ErrorRate   int
+	Active      bool
 	activeConns int64
 	httpServer  *http.Server
 }
@@ -56,6 +57,7 @@ func (s *Server) ActiveConns() int64 {
 }
 
 func Start(s *Server) {
+	s.Active = true
 	addr := fmt.Sprintf(":%d", s.Port)
 	s.httpServer = &http.Server{
 		Addr:    addr,
@@ -76,6 +78,7 @@ func Start(s *Server) {
 
 func (s *Server) Shutdown() {
 	if s.httpServer != nil {
+		s.Active = false
 		log.Printf("[backend] shutting down server on port %d", s.Port)
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
