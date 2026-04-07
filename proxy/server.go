@@ -15,7 +15,7 @@ import (
 )
 
 type Proxy struct {
-	backends      []*backends.Server
+	backends      *[]*backends.Server
 	balancer      balancer.Balancer
 	mu            sync.RWMutex
 	trafficServer *http.Server
@@ -23,7 +23,10 @@ type Proxy struct {
 }
 
 func New() *Proxy {
-	return &Proxy{}
+	backends := make([]*backends.Server, 0)
+	return &Proxy{
+		backends: &backends,
+	}
 }
 
 func (p *Proxy) AddServers(configs []config.ServerConfig) {
@@ -37,17 +40,17 @@ func (p *Proxy) AddServers(configs []config.ServerConfig) {
 			Capacity:    c.Capacity,
 			ErrorRate:   c.ErrorRate,
 			Weight:      c.Weight,
+			IsCanary:    c.IsCanary,
 			Active:      true,
 		}
-		p.backends = append(p.backends, s)
+		*p.backends = append(*p.backends, s)
 		go backends.Start(s)
 
-		// notify balancer to update internal state for new server
 		if p.balancer != nil {
 			p.balancer.OnAddServer(s)
 		}
 
-		log.Printf("[proxy] added backend on port %d", c.Port)
+		log.Printf("[proxy] added backend on port %d | canary %v", c.Port, c.IsCanary)
 	}
 }
 
@@ -55,13 +58,28 @@ func (p *Proxy) SetStrategy(strategy string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	b, err := balancer.New(strategy, &p.backends)
+	b, err := balancer.New(strategy, p.backends)
 	if err != nil {
 		return err
 	}
 
 	p.balancer = b
 	log.Printf("[proxy] strategy set to %s", strategy)
+	return nil
+}
+
+func (p *Proxy) SetCanaryStrategy(cfg config.StrategyConfig) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	b, err := balancer.New("canary", p.backends, cfg.CanaryPort, cfg.CanaryPercent, cfg.ErrorThreshold)
+	if err != nil {
+		return err
+	}
+
+	p.balancer = b
+	log.Printf("[proxy] canary strategy set — port %d at %d%% threshold %.0f%%",
+		cfg.CanaryPort, cfg.CanaryPercent, cfg.ErrorThreshold*100)
 	return nil
 }
 
@@ -140,7 +158,14 @@ func (p *Proxy) handleStrategy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := p.SetStrategy(cfg.Strategy); err != nil {
+	var err error
+	if cfg.Strategy == "canary" {
+		err = p.SetCanaryStrategy(cfg)
+	} else {
+		err = p.SetStrategy(cfg.Strategy)
+	}
+
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -174,7 +199,7 @@ func (p *Proxy) Shutdown() {
 		p.trafficServer.Shutdown(ctx)
 	}
 
-	for _, b := range p.backends {
+	for _, b := range *p.backends {
 		b.Shutdown()
 	}
 

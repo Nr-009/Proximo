@@ -18,7 +18,10 @@ type Server struct {
 	ErrorRate   int
 	Weight      int
 	Active      bool
+	IsCanary    bool
 	Connections int64
+	Errors      int64
+	Requests    int64
 	activeConns int64
 	httpServer  *http.Server
 }
@@ -34,7 +37,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer atomic.AddInt64(&s.activeConns, -1)
 
 	if s.ErrorRate > 0 && rand.Intn(100) < s.ErrorRate {
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
@@ -50,6 +53,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"server":     s.Port,
 		"latency_ms": latency.Milliseconds(),
+		"is_canary":  s.IsCanary,
 	})
 }
 
@@ -60,8 +64,8 @@ func Start(s *Server) {
 		Handler: s,
 	}
 
-	log.Printf("[backend] server starting on port %d | latency %dms | capacity %d | weight %d | error rate %d%%",
-		s.Port, s.BaseLatency.Milliseconds(), s.Capacity, s.Weight, s.ErrorRate)
+	log.Printf("[backend] server starting on port %d | latency %dms | capacity %d | weight %d | canary %v | error rate %d%%",
+		s.Port, s.BaseLatency.Milliseconds(), s.Capacity, s.Weight, s.IsCanary, s.ErrorRate)
 
 	if err := s.httpServer.ListenAndServe(); err != nil {
 		if err == http.ErrServerClosed {
