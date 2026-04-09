@@ -33,6 +33,32 @@ func (p *Proxy) callBackend(r *http.Request, backend *backends.Server) (*http.Re
 }
 
 func (p *Proxy) forward(w http.ResponseWriter, r *http.Request) {
+	clientPort := r.Header.Get("X-Source-Port")
+	if clientPort == "" {
+		clientPort = "unknown"
+	}
+
+	p.mu.RLock()
+	blacklist := p.blacklist
+	limiter := p.limiter
+	p.mu.RUnlock()
+
+	if blacklist.IsBlocked(clientPort) {
+		log.Printf("[blacklist] client %s blocked — 403", clientPort)
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
+	if limiter != nil {
+		if !limiter.Allow(clientPort) {
+			log.Printf("[ratelimit] client %s rejected — too many requests", clientPort)
+			blacklist.RecordViolation(clientPort)
+			http.Error(w, "too many requests", http.StatusTooManyRequests)
+			return
+		}
+		defer limiter.Done(clientPort)
+	}
+
 	p.mu.RLock()
 	b := p.balancer
 	if b == nil {
@@ -60,13 +86,11 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// canary failed — retry transparently on stable server
 	if resp.StatusCode >= 500 && backend.IsCanary {
 		log.Printf("[proxy] canary %d failed with %d — retrying on stable", backend.Port, resp.StatusCode)
 		atomic.AddInt64(&backend.Errors, 1)
 		resp.Body.Close()
 
-		// type assert — only canary has NextStable
 		canaryBalancer, ok := b.(*balancer.Canary)
 		if !ok {
 			http.Error(w, "service unavailable", http.StatusServiceUnavailable)
@@ -102,6 +126,7 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request) {
 			w.Header().Add(key, value)
 		}
 	}
+
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
 }

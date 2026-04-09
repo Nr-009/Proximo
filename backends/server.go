@@ -48,7 +48,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	time.Sleep(latency)
-
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"server":     s.Port,
@@ -78,7 +77,6 @@ func Start(s *Server) {
 
 func (s *Server) Shutdown() {
 	if s.httpServer != nil {
-		s.Active = false
 		log.Printf("[backend] shutting down server on port %d", s.Port)
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

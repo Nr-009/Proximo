@@ -12,11 +12,15 @@ import (
 	"github.com/Nr-009/Proximo/backends"
 	"github.com/Nr-009/Proximo/balancer"
 	"github.com/Nr-009/Proximo/config"
+	"github.com/Nr-009/Proximo/health"
+	"github.com/Nr-009/Proximo/ratelimit"
 )
 
 type Proxy struct {
 	backends      *[]*backends.Server
 	balancer      balancer.Balancer
+	limiter       ratelimit.Limiter
+	blacklist     *ratelimit.Blacklist
 	mu            sync.RWMutex
 	trafficServer *http.Server
 	adminServer   *http.Server
@@ -25,7 +29,8 @@ type Proxy struct {
 func New() *Proxy {
 	backends := make([]*backends.Server, 0)
 	return &Proxy{
-		backends: &backends,
+		backends:  &backends,
+		blacklist: ratelimit.NewBlacklist(10),
 	}
 }
 
@@ -83,7 +88,15 @@ func (p *Proxy) SetCanaryStrategy(cfg config.StrategyConfig) error {
 	return nil
 }
 
+func (p *Proxy) SetLimiter(limiter ratelimit.Limiter) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.limiter = limiter
+	log.Printf("[proxy] rate limiter updated")
+}
+
 func (p *Proxy) Start(trafficPort, adminPort int) {
+	health.StartHealthChecker(p.backends, &p.mu)
 	go p.startAdmin(adminPort)
 	time.Sleep(100 * time.Millisecond)
 	p.startTraffic(trafficPort)
@@ -112,6 +125,10 @@ func (p *Proxy) startAdmin(port int) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/servers", p.handleServers)
 	mux.HandleFunc("/strategy", p.handleStrategy)
+	mux.HandleFunc("/ratelimit", p.handleRateLimit)
+	mux.HandleFunc("/blacklist", p.handleBlacklist)
+	mux.HandleFunc("/kill", p.handleKill)
+	mux.HandleFunc("/resurrect", p.handleResurrect)
 	mux.HandleFunc("/shutdown", p.handleShutdown)
 
 	p.adminServer = &http.Server{
@@ -172,6 +189,131 @@ func (p *Proxy) handleStrategy(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"status": "strategy updated"})
+}
+
+func (p *Proxy) handleRateLimit(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var cfg config.RateLimitConfig
+	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	var limiter ratelimit.Limiter
+	switch cfg.Algorithm {
+	case "token-bucket":
+		limiter = ratelimit.NewTokenBucket(cfg.RequestsPerSecond, cfg.BucketSize)
+	case "sliding-window":
+		limiter = ratelimit.NewSlidingWindow(cfg.RequestsPerSecond, cfg.WindowSeconds)
+	case "leaky-bucket":
+		limiter = ratelimit.NewLeakyBucket(cfg.RequestsPerSecond, cfg.BucketSize)
+	case "concurrent":
+		limiter = ratelimit.NewConcurrentLimiter(cfg.MaxConcurrent)
+	default:
+		http.Error(w, fmt.Sprintf("unknown algorithm: %s", cfg.Algorithm), http.StatusBadRequest)
+		return
+	}
+
+	p.SetLimiter(limiter)
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "rate limiter updated"})
+}
+
+func (p *Proxy) handleBlacklist(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodPost:
+		var body struct {
+			Port string `json:"port"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		p.blacklist.Block(body.Port)
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"status": "port blacklisted"})
+
+	case http.MethodGet:
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(p.blacklist.Status())
+
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (p *Proxy) handleKill(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var body struct {
+		Port int `json:"port"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	p.mu.RLock()
+	var target *backends.Server
+	for _, s := range *p.backends {
+		if s.Port == body.Port {
+			target = s
+			break
+		}
+	}
+	p.mu.RUnlock()
+
+	if target == nil {
+		http.Error(w, "server not found", http.StatusNotFound)
+		return
+	}
+
+	target.Shutdown()
+	log.Printf("[proxy] killed server on port %d", body.Port)
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "server killed"})
+}
+
+func (p *Proxy) handleResurrect(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var body struct {
+		Port int `json:"port"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	p.mu.RLock()
+	var target *backends.Server
+	for _, s := range *p.backends {
+		if s.Port == body.Port {
+			target = s
+			break
+		}
+	}
+	p.mu.RUnlock()
+
+	if target == nil {
+		http.Error(w, "server not found", http.StatusNotFound)
+		return
+	}
+
+	go backends.Start(target)
+	log.Printf("[proxy] resurrecting server on port %d", body.Port)
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "server resurrecting"})
 }
 
 func (p *Proxy) handleShutdown(w http.ResponseWriter, r *http.Request) {
