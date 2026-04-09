@@ -4,15 +4,18 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
 	"github.com/Nr-009/Proximo/backends"
 )
 
 type ServerSnapshot struct {
-	Port        int
-	Active      bool
-	Requests    int64
-	Errors      int64
-	Connections int64
+	Port         int
+	Active       bool
+	Requests     int64
+	Errors       int64
+	Connections  int64
+	LatencySum   int64
+	LatencyCount int64
 }
 
 type Snapshot struct {
@@ -57,11 +60,13 @@ func (c *Collector) collect() {
 	serverSnapshots := make([]ServerSnapshot, len(snapshot))
 	for i, s := range snapshot {
 		serverSnapshots[i] = ServerSnapshot{
-			Port:        s.Port,
-			Active:      s.Active,
-			Requests:    atomic.LoadInt64(&s.Requests),
-			Errors:      atomic.LoadInt64(&s.Errors),
-			Connections: atomic.LoadInt64(&s.Connections),
+			Port:         s.Port,
+			Active:       s.Active,
+			Requests:     atomic.LoadInt64(&s.Requests),
+			Errors:       atomic.LoadInt64(&s.Errors),
+			Connections:  atomic.LoadInt64(&s.Connections),
+			LatencySum:   atomic.LoadInt64(&s.LatencySum),
+			LatencyCount: atomic.LoadInt64(&s.LatencyCount),
 		}
 	}
 

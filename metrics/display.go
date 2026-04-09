@@ -39,8 +39,12 @@ func StartLiveDisplay(c *Collector, stop <-chan struct{}) {
 					if !s.Active {
 						status = "DOWN"
 					}
-					fmt.Printf("  %d [%s]: %d req | %d err | %d conns\n",
-						s.Port, status, s.Requests, s.Errors, s.Connections)
+					avgLatency := int64(0)
+					if s.LatencyCount > 0 {
+						avgLatency = s.LatencySum / s.LatencyCount
+					}
+					fmt.Printf("  %d [%s]: %d req | %d err | %d conns | avg %dms\n",
+						s.Port, status, s.Requests, s.Errors, s.Connections, avgLatency)
 				}
 			}
 		}
@@ -53,25 +57,34 @@ func PrintFinalSummary(c *Collector) {
 	fmt.Println("\n================================================================================")
 	fmt.Println("FINAL SUMMARY")
 	fmt.Println("================================================================================")
-	fmt.Printf("%-8s %-10s %-10s %-10s %-12s\n", "Server", "Requests", "Errors", "Error%", "Connections")
+	fmt.Printf("%-8s %-10s %-10s %-10s %-12s %-10s\n",
+		"Server", "Requests", "Errors", "Error%", "Connections", "Avg ms")
 	fmt.Println("------------------------------------------------------------------------")
 
 	var totalRequests int64
 	var totalErrors int64
+	var totalLatencySum int64
+	var totalLatencyCount int64
 
 	for _, s := range snap.Servers {
 		errPct := 0.0
 		if s.Requests > 0 {
 			errPct = float64(s.Errors) / float64(s.Requests) * 100
 		}
+		avgLatency := int64(0)
+		if s.LatencyCount > 0 {
+			avgLatency = s.LatencySum / s.LatencyCount
+		}
 		status := ""
 		if !s.Active {
 			status = " [DOWN]"
 		}
-		fmt.Printf("%-8d %-10d %-10d %-10.1f %-12d%s\n",
-			s.Port, s.Requests, s.Errors, errPct, s.Connections, status)
+		fmt.Printf("%-8d %-10d %-10d %-10.1f %-12d %-10d%s\n",
+			s.Port, s.Requests, s.Errors, errPct, s.Connections, avgLatency, status)
 		totalRequests += s.Requests
 		totalErrors += s.Errors
+		totalLatencySum += s.LatencySum
+		totalLatencyCount += s.LatencyCount
 	}
 
 	fmt.Println("------------------------------------------------------------------------")
@@ -79,7 +92,12 @@ func PrintFinalSummary(c *Collector) {
 	if totalRequests > 0 {
 		totalErrPct = float64(totalErrors) / float64(totalRequests) * 100
 	}
-	fmt.Printf("%-8s %-10d %-10d %-10.1f\n", "Total", totalRequests, totalErrors, totalErrPct)
+	totalAvgLatency := int64(0)
+	if totalLatencyCount > 0 {
+		totalAvgLatency = totalLatencySum / totalLatencyCount
+	}
+	fmt.Printf("%-8s %-10d %-10d %-10.1f %-12s %-10d\n",
+		"Total", totalRequests, totalErrors, totalErrPct, "-", totalAvgLatency)
 	fmt.Printf("\nRejected (rate limit / blacklist): %d\n", snap.Rejected)
 	fmt.Println("================================================================================")
 }

@@ -12,18 +12,20 @@ import (
 )
 
 type Server struct {
-	Port        int
-	BaseLatency time.Duration
-	Capacity    int
-	ErrorRate   int
-	Weight      int
-	Active      bool
-	IsCanary    bool
-	Connections int64
-	Errors      int64
-	Requests    int64
-	activeConns int64
-	httpServer  *http.Server
+	Port         int
+	BaseLatency  time.Duration
+	Capacity     int
+	ErrorRate    int
+	Weight       int
+	Active       bool
+	IsCanary     bool
+	Connections  int64
+	Errors       int64
+	Requests     int64
+	LatencySum   int64
+	LatencyCount int64
+	activeConns  int64
+	httpServer   *http.Server
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {

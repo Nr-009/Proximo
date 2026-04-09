@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"sync/atomic"
+	"time"
 
 	"github.com/Nr-009/Proximo/backends"
 	"github.com/Nr-009/Proximo/balancer"
@@ -81,6 +82,7 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request) {
 	atomic.AddInt64(&backend.Connections, 1)
 	defer atomic.AddInt64(&backend.Connections, -1)
 
+	start := time.Now()
 	resp, err := p.callBackend(r, backend)
 	if err != nil {
 		log.Printf("[proxy] backend %d unreachable: %v", backend.Port, err)
@@ -88,6 +90,9 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad gateway", http.StatusBadGateway)
 		return
 	}
+	elapsed := time.Since(start).Milliseconds()
+	atomic.AddInt64(&backend.LatencySum, elapsed)
+	atomic.AddInt64(&backend.LatencyCount, 1)
 
 	if resp.StatusCode >= 500 && backend.IsCanary {
 		log.Printf("[proxy] canary %d failed with %d — retrying on stable", backend.Port, resp.StatusCode)
@@ -111,6 +116,7 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt64(&stable.Connections, 1)
 		defer atomic.AddInt64(&stable.Connections, -1)
 
+		start := time.Now()
 		resp, err = p.callBackend(r, stable)
 		if err != nil {
 			log.Printf("[proxy] stable backend %d unreachable: %v", stable.Port, err)
@@ -118,6 +124,10 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "bad gateway", http.StatusBadGateway)
 			return
 		}
+		elapsed := time.Since(start).Milliseconds()
+		atomic.AddInt64(&stable.LatencySum, elapsed)
+		atomic.AddInt64(&stable.LatencyCount, 1)
+
 	} else if resp.StatusCode >= 500 {
 		atomic.AddInt64(&backend.Errors, 1)
 		log.Printf("[proxy] backend %d returned %d", backend.Port, resp.StatusCode)
