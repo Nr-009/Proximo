@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -33,10 +34,14 @@ func readInt(prompt string, defaultVal int) int {
 func main() {
 	fmt.Println("=== Proximo Sender ===")
 	fmt.Println()
-
 	proxyURL := readLine("Proxy address [localhost:8080]: ")
 	if proxyURL == "" {
 		proxyURL = "localhost:8080"
+	}
+
+	adminURL := readLine("Admin address [localhost:9000]: ")
+	if adminURL == "" {
+		adminURL = "localhost:9000"
 	}
 
 	numSenders := readInt("How many senders? [1]: ", 1)
@@ -47,29 +52,22 @@ func main() {
 	}
 
 	configs := make([]senderConfig, numSenders)
-
 	for i := 0; i < numSenders; i++ {
 		fmt.Printf("\n--- Sender %d ---\n", i+1)
-
 		pattern := readLine("Pattern (steady/burst/wave) [steady]: ")
 		if pattern == "" {
 			pattern = "steady"
 		}
-
 		rate := readInt("Rate (req/s or total for burst) [10]: ", 10)
-
 		durationSec := readInt("Duration in seconds [30]: ", 30)
-
 		portMode := readLine("Port mode (random/fixed) [random]: ")
 		if portMode == "" {
 			portMode = "random"
 		}
-
 		port := 0
 		if portMode == "fixed" {
 			port = readInt("Fixed port [7001]: ", 7001)
 		}
-
 		configs[i] = senderConfig{
 			sender: &Sender{
 				Rate:     rate,
@@ -83,14 +81,13 @@ func main() {
 	}
 
 	fmt.Println("\n=== Starting senders ===")
+	http.Post("http://"+adminURL+"/metrics/start", "application/json", nil)
 
 	var wg sync.WaitGroup
 	results := make([]*Result, numSenders)
-
 	for i, cfg := range configs {
 		results[i] = &Result{}
 		wg.Add(1)
-
 		go func(idx int, c senderConfig, result *Result) {
 			defer wg.Done()
 			switch c.pattern {
@@ -107,12 +104,12 @@ func main() {
 	}
 
 	wg.Wait()
+	http.Post("http://"+adminURL+"/metrics/stop", "application/json", nil)
 
 	fmt.Println("\n=== Results ===")
 	totalSuccess := int64(0)
 	totalErrors := int64(0)
 	totalRequests := int64(0)
-
 	for i, r := range results {
 		fmt.Printf("Sender %d — total: %d | success: %d | errors: %d\n",
 			i+1, r.Total, r.Success, r.Errors)
@@ -120,7 +117,6 @@ func main() {
 		totalErrors += r.Errors
 		totalRequests += r.Total
 	}
-
 	fmt.Println("---")
 	fmt.Printf("Overall — total: %d | success: %d | errors: %d\n",
 		totalRequests, totalSuccess, totalErrors)

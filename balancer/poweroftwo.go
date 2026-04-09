@@ -24,13 +24,10 @@ func (p *PowerOfTwo) NextServer() (*backends.Server, error) {
 			active = append(active, s)
 		}
 	}
-
 	if len(active) == 0 {
 		return nil, errors.New("all servers are inactive")
 	}
-
 	if len(active) == 1 {
-		atomic.AddInt64(&active[0].Connections, 1)
 		return active[0], nil
 	}
 
@@ -43,15 +40,10 @@ func (p *PowerOfTwo) NextServer() (*backends.Server, error) {
 	a := active[i]
 	b := active[j]
 
-	var best *backends.Server
 	if atomic.LoadInt64(&a.Connections) <= atomic.LoadInt64(&b.Connections) {
-		best = a
-	} else {
-		best = b
+		return a, nil
 	}
-
-	atomic.AddInt64(&best.Connections, 1)
-	return best, nil
+	return b, nil
 }
 
 func (p *PowerOfTwo) OnAddServer(s *backends.Server) {

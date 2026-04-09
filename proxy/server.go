@@ -7,12 +7,14 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Nr-009/Proximo/backends"
 	"github.com/Nr-009/Proximo/balancer"
 	"github.com/Nr-009/Proximo/config"
 	"github.com/Nr-009/Proximo/health"
+	"github.com/Nr-009/Proximo/metrics"
 	"github.com/Nr-009/Proximo/ratelimit"
 )
 
@@ -21,6 +23,9 @@ type Proxy struct {
 	balancer      balancer.Balancer
 	limiter       ratelimit.Limiter
 	blacklist     *ratelimit.Blacklist
+	Rejected      int64
+	collector     *metrics.Collector
+	metricsStop   chan struct{}
 	mu            sync.RWMutex
 	trafficServer *http.Server
 	adminServer   *http.Server
@@ -97,6 +102,8 @@ func (p *Proxy) SetLimiter(limiter ratelimit.Limiter) {
 
 func (p *Proxy) Start(trafficPort, adminPort int) {
 	health.StartHealthChecker(p.backends, &p.mu)
+	p.collector = metrics.NewCollector(p.backends, &p.mu, &p.Rejected)
+	p.collector.Start()
 	go p.startAdmin(adminPort)
 	time.Sleep(100 * time.Millisecond)
 	p.startTraffic(trafficPort)
@@ -129,6 +136,8 @@ func (p *Proxy) startAdmin(port int) {
 	mux.HandleFunc("/blacklist", p.handleBlacklist)
 	mux.HandleFunc("/kill", p.handleKill)
 	mux.HandleFunc("/resurrect", p.handleResurrect)
+	mux.HandleFunc("/metrics/start", p.handleMetricsStart)
+	mux.HandleFunc("/metrics/stop", p.handleMetricsStop)
 	mux.HandleFunc("/shutdown", p.handleShutdown)
 
 	p.adminServer = &http.Server{
@@ -144,6 +153,45 @@ func (p *Proxy) startAdmin(port int) {
 			log.Fatalf("[proxy] admin listener failed: %v", err)
 		}
 	}
+}
+
+func (p *Proxy) handleMetricsStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	p.mu.Lock()
+	if p.metricsStop != nil {
+		close(p.metricsStop)
+	}
+	p.metricsStop = make(chan struct{})
+	stop := p.metricsStop
+	p.mu.Unlock()
+
+	metrics.StartLiveDisplay(p.collector, stop)
+	log.Printf("[metrics] live display started")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "metrics started"})
+}
+
+func (p *Proxy) handleMetricsStop(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	p.mu.Lock()
+	if p.metricsStop != nil {
+		close(p.metricsStop)
+		p.metricsStop = nil
+	}
+	p.mu.Unlock()
+
+	metrics.PrintFinalSummary(p.collector)
+	log.Printf("[metrics] live display stopped")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "metrics stopped"})
 }
 
 func (p *Proxy) handleServers(w http.ResponseWriter, r *http.Request) {
@@ -352,4 +400,8 @@ func (p *Proxy) Shutdown() {
 	}
 
 	log.Println("[proxy] all servers stopped cleanly")
+}
+
+func (p *Proxy) GetRejected() int64 {
+	return atomic.LoadInt64(&p.Rejected)
 }

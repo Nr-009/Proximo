@@ -45,6 +45,7 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request) {
 
 	if blacklist.IsBlocked(clientPort) {
 		log.Printf("[blacklist] client %s blocked — 403", clientPort)
+		atomic.AddInt64(&p.Rejected, 1)
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -53,6 +54,7 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request) {
 		if !limiter.Allow(clientPort) {
 			log.Printf("[ratelimit] client %s rejected — too many requests", clientPort)
 			blacklist.RecordViolation(clientPort)
+			atomic.AddInt64(&p.Rejected, 1)
 			http.Error(w, "too many requests", http.StatusTooManyRequests)
 			return
 		}
@@ -76,6 +78,7 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request) {
 	}
 
 	atomic.AddInt64(&backend.Requests, 1)
+	atomic.AddInt64(&backend.Connections, 1)
 	defer atomic.AddInt64(&backend.Connections, -1)
 
 	resp, err := p.callBackend(r, backend)
@@ -105,6 +108,7 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request) {
 		}
 
 		atomic.AddInt64(&stable.Requests, 1)
+		atomic.AddInt64(&stable.Connections, 1)
 		defer atomic.AddInt64(&stable.Connections, -1)
 
 		resp, err = p.callBackend(r, stable)

@@ -18,7 +18,6 @@ func NewLeastConn(servers *[]*backends.Server) *LeastConn {
 
 func (lc *LeastConn) NextServer() (*backends.Server, error) {
 	var best *backends.Server
-
 	for _, s := range *lc.servers {
 		if !s.Active {
 			continue
@@ -27,12 +26,9 @@ func (lc *LeastConn) NextServer() (*backends.Server, error) {
 			best = s
 		}
 	}
-
 	if best == nil {
 		return nil, errors.New("all servers are inactive")
 	}
-
-	atomic.AddInt64(&best.Connections, 1)
 	return best, nil
 }
 
